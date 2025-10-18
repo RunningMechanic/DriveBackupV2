@@ -16,6 +16,7 @@ import ratismal.drivebackup.config.configSections.ExternalBackups.ExternalFTPSou
 import ratismal.drivebackup.config.configSections.ExternalBackups.ExternalMySQLSource;
 import ratismal.drivebackup.config.configSections.ExternalBackups.ExternalMySQLSource.MySQLDatabaseBackup;
 import ratismal.drivebackup.constants.Permission;
+import ratismal.drivebackup.discord.DiscordController;
 import ratismal.drivebackup.handler.listeners.PlayerListener;
 import ratismal.drivebackup.plugin.Scheduler;
 import ratismal.drivebackup.uploaders.Authenticator;
@@ -144,7 +145,10 @@ public class UploadThread implements Runnable {
     /**
      * Creates an instance of the {@code UploadThread} object
      */
-    public UploadThread() {
+    public UploadThread(boolean auto) {
+        if(auto){
+            DiscordController.sendEmbed("backup","Auto Backup Started.");
+        }
         logger = new UploadLogger() {
             @Override
             public void log(String input, String... placeholders) {

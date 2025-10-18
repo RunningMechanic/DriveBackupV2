@@ -76,7 +76,7 @@ public class Scheduler {
                     }
                     backupTasks.add(taskScheduler.runTaskTimerAsynchronously(
                         DriveBackup.getInstance(), 
-                        new UploadThread(),
+                        new UploadThread(false),
                         SchedulerUtil.sToTicks(ChronoUnit.SECONDS.between(now, startingOccurrence)),
                         SchedulerUtil.sToTicks(ChronoUnit.SECONDS.between(previousOccurrence, nextOccurrence))
                     ).getTaskId());
@@ -120,7 +120,7 @@ public class Scheduler {
             long interval = SchedulerUtil.sToTicks(config.backupStorage.delay * 60);
             backupTasks.add(taskScheduler.runTaskTimerAsynchronously(
                     DriveBackup.getInstance(),
-                    new UploadThread(),
+                    new UploadThread(true),
                     interval,
                     interval
             ).getTaskId());
