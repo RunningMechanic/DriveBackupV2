@@ -16,8 +16,10 @@ import ratismal.drivebackup.config.configSections.ExternalBackups.ExternalFTPSou
 import ratismal.drivebackup.config.configSections.ExternalBackups.ExternalMySQLSource;
 import ratismal.drivebackup.config.configSections.ExternalBackups.ExternalMySQLSource.MySQLDatabaseBackup;
 import ratismal.drivebackup.constants.Permission;
-import ratismal.drivebackup.discord.DiscordController;
+import ratismal.drivebackup.discord.AutoBackupEndEvent;
+import ratismal.drivebackup.discord.AutoBackupStartEvent;
 import ratismal.drivebackup.handler.listeners.PlayerListener;
+import ratismal.drivebackup.plugin.DriveBackup;
 import ratismal.drivebackup.plugin.Scheduler;
 import ratismal.drivebackup.uploaders.Authenticator;
 import ratismal.drivebackup.uploaders.Authenticator.AuthenticationProvider;
@@ -145,10 +147,7 @@ public class UploadThread implements Runnable {
     /**
      * Creates an instance of the {@code UploadThread} object
      */
-    public UploadThread(boolean auto) {
-        if(auto){
-            DiscordController.sendEmbed("backup","Auto Backup Started.");
-        }
+    public UploadThread() {
         logger = new UploadLogger() {
             @Override
             public void log(String input, String... placeholders) {
@@ -201,6 +200,7 @@ public class UploadThread implements Runnable {
                 "backup-status", getBackupStatus());
             return;
         }
+        Bukkit.getLogger().info("[DriveBackupV2] UploadThread.run invoked (initiator=" + (initiator==null?"null/auto":"present/manual") + ")");
         try {
             run_internal();
         } catch (Exception e) {
@@ -213,6 +213,30 @@ public class UploadThread implements Runnable {
             } else {
                 DriveBackupApi.backupError();
             }
+            // カスタムイベント: 自動バックアップ終了（initiator == null の場合のみ）
+            if (initiator == null) {
+                try {
+                    // callEvent はメインスレッドで実行する
+                    Bukkit.getLogger().info("[DriveBackupV2] Attempting to fire AutoBackupEndEvent (isMainThread=" + Bukkit.isPrimaryThread() + ")");
+                    if (Bukkit.isPrimaryThread()) {
+                        Bukkit.getLogger().info("[DriveBackupV2] Firing AutoBackupEndEvent synchronously");
+                        Bukkit.getPluginManager().callEvent(new AutoBackupEndEvent(lastBackupSuccessful));
+                    } else {
+                        Bukkit.getLogger().info("[DriveBackupV2] Scheduling AutoBackupEndEvent to runTask on main thread");
+                        DriveBackup instance = DriveBackup.getInstance();
+                        if (instance == null) {
+                            Bukkit.getLogger().warning("[DriveBackupV2] Cannot schedule AutoBackupEndEvent: plugin instance is null. Event will not be fired asynchronously.");
+                        } else {
+                            Bukkit.getScheduler().runTask(instance, () -> {
+                                Bukkit.getLogger().info("[DriveBackupV2] Running scheduled AutoBackupEndEvent on main thread");
+                                Bukkit.getPluginManager().callEvent(new AutoBackupEndEvent(lastBackupSuccessful));
+                            });
+                        }
+                 }
+                } catch (Exception ex) {
+                    Bukkit.getLogger().warning("[DriveBackupV2] Failed to fire AutoBackupEndEvent: " + ex.getMessage());
+                }
+            }
         }
     }
 
@@ -221,6 +245,7 @@ public class UploadThread implements Runnable {
      */
     void run_internal() {
         Config config = ConfigParser.getConfig();
+        Bukkit.getLogger().info("[DriveBackupV2] UploadThread.run_internal started (initiator=" + (initiator==null?"auto":"manual") + ")");
         totalTimer.start();
         backupStatus = BackupStatus.STARTING;
         if (!locationsToBePruned.isEmpty()) {
@@ -230,11 +255,39 @@ public class UploadThread implements Runnable {
             updateNextIntervalBackupTime();
         }
         Thread.currentThread().setPriority(config.backupStorage.threadPriority);
-        if (!DriveBackupApi.shouldStartBackup()) {
+        boolean shouldStart = DriveBackupApi.shouldStartBackup();
+        Bukkit.getLogger().info("[DriveBackupV2] DriveBackupApi.shouldStartBackup() = " + shouldStart);
+        if (!shouldStart) {
+            Bukkit.getLogger().info("[DriveBackupV2] Aborting backup because shouldStartBackup returned false");
             return;
         }
         if (config.backupStorage.backupsRequirePlayers && !PlayerListener.isAutoBackupsActive() && initiator == null) {
+            Bukkit.getLogger().info("[DriveBackupV2] Aborting backup because backupsRequirePlayers is true but no players are present or auto backups inactive");
             return;
+        }
+        // カスタムイベント: 自動バックアップ開始（initiator == null の場合のみ）
+        if (initiator == null) {
+            try {
+                // callEvent はメインスレッドで実行する
+                Bukkit.getLogger().info("[DriveBackupV2] Attempting to fire AutoBackupStartEvent (isMainThread=" + Bukkit.isPrimaryThread() + ")");
+                if (Bukkit.isPrimaryThread()) {
+                    Bukkit.getLogger().info("[DriveBackupV2] Firing AutoBackupStartEvent synchronously");
+                    Bukkit.getPluginManager().callEvent(new AutoBackupStartEvent());
+                } else {
+                    Bukkit.getLogger().info("[DriveBackupV2] Scheduling AutoBackupStartEvent to runTask on main thread");
+                    DriveBackup instance = DriveBackup.getInstance();
+                    if (instance == null) {
+                        Bukkit.getLogger().warning("[DriveBackupV2] Cannot schedule AutoBackupStartEvent: plugin instance is null. Event will not be fired asynchronously.");
+                    } else {
+                        Bukkit.getScheduler().runTask(instance, () -> {
+                            Bukkit.getLogger().info("[DriveBackupV2] Running scheduled AutoBackupStartEvent on main thread");
+                            Bukkit.getPluginManager().callEvent(new AutoBackupStartEvent());
+                        });
+                    }
+                 }
+            } catch (Exception ex) {
+                Bukkit.getLogger().warning("[DriveBackupV2] Failed to fire AutoBackupStartEvent: " + ex.getMessage());
+            }
         }
         boolean errorOccurred = false;
         List<ExternalBackupSource> externalBackupList = Arrays.asList(config.externalBackups.sources);

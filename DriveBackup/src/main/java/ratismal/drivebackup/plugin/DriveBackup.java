@@ -15,6 +15,7 @@ import ratismal.drivebackup.handler.CommandTabComplete;
 import ratismal.drivebackup.handler.commandHandler.CommandHandler;
 import ratismal.drivebackup.handler.listeners.ChatInputListener;
 import ratismal.drivebackup.handler.listeners.PlayerListener;
+import ratismal.drivebackup.discord.EventDebuggerListener;
 import ratismal.drivebackup.plugin.updater.UpdateChecker;
 import ratismal.drivebackup.plugin.updater.Updater;
 import ratismal.drivebackup.util.CustomConfig;
@@ -84,6 +85,8 @@ public class DriveBackup extends JavaPlugin {
         PluginManager pm = getServer().getPluginManager();
         pm.registerEvents(new PlayerListener(), plugin);
         pm.registerEvents(new ChatInputListener(), plugin);
+        // internal debug listener to verify AutoBackup events are delivered
+        pm.registerEvents(new EventDebuggerListener(), plugin);
         Scheduler.startBackupThread();
         BstatsMetrics.initMetrics();
         updater = new Updater(getFile());

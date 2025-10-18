@@ -8,3 +8,6 @@ commands:
   drivebackup:
     description: View all DriveBackupV2 commands
     usage: /drivebackup
+  dbv2event:
+    description: Test AutoBackup events (internal)
+    usage: /dbv2event <start|end> [success]

@@ -111,7 +111,7 @@ public class DriveBackupApi {
      * Behaves identically to running {@code /drivebackup backup}
      */
     public static void startBackup() {
-        new Thread(new UploadThread(false)).start();
+        new Thread(new UploadThread()).start();
     }
 
     /**
