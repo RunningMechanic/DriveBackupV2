@@ -12,10 +12,10 @@ public class Messages {
 
     public Messages(
         boolean sendInChat,
-        String prefix, 
+        String prefix,
         String defaultColor
         ) {
-        
+
         this.sendInChat = sendInChat;
         this.prefix = prefix;
         this.defaultColor = defaultColor;

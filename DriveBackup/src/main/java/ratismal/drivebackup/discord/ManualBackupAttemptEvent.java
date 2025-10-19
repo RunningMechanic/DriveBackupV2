@@ -4,14 +4,12 @@ import org.bukkit.event.Event;
 import org.bukkit.event.HandlerList;
 
 /**
- * Fired when an automatic backup starts (not triggered by a player).
- * Can be used by other plugins (or DiscordSRV alerts) to react to auto backups.
+ * Fired when a manual backup is attempted but not started.
  */
-public class AutoBackupStartEvent extends Event {
+public class ManualBackupAttemptEvent extends Event {
     private static final HandlerList handlers = new HandlerList();
 
-    public AutoBackupStartEvent() {
-        // synchronous by default - do not mark async to allow firing on the main thread
+    public ManualBackupAttemptEvent() {
         super();
     }
 
@@ -24,3 +22,4 @@ public class AutoBackupStartEvent extends Event {
         return handlers;
     }
 }
+

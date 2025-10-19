@@ -12,6 +12,7 @@ public class AutoBackupEndEvent extends Event {
     private final boolean success;
 
     public AutoBackupEndEvent(boolean success) {
+        // synchronous by default - do not mark async so it can be called on the main thread
         super();
         this.success = success;
     }

@@ -18,6 +18,10 @@ import ratismal.drivebackup.config.configSections.ExternalBackups.ExternalMySQLS
 import ratismal.drivebackup.constants.Permission;
 import ratismal.drivebackup.discord.AutoBackupEndEvent;
 import ratismal.drivebackup.discord.AutoBackupStartEvent;
+import ratismal.drivebackup.discord.AutoBackupAttemptEvent;
+import ratismal.drivebackup.discord.ManualBackupAttemptEvent;
+import ratismal.drivebackup.discord.ManualBackupStartEvent;
+import ratismal.drivebackup.discord.ManualBackupEndEvent;
 import ratismal.drivebackup.handler.listeners.PlayerListener;
 import ratismal.drivebackup.plugin.DriveBackup;
 import ratismal.drivebackup.plugin.Scheduler;
@@ -69,7 +73,7 @@ import static ratismal.drivebackup.config.Localization.intl;
  */
 
 public class UploadThread implements Runnable {
-    
+
     private static final String LINK_COMMAND = "/drivebackup linkaccount ";
     private CommandSender initiator;
     private final UploadLogger logger;
@@ -89,7 +93,7 @@ public class UploadThread implements Runnable {
          * The backup thread is compressing the files to be backed up.
          */
         COMPRESSING,
-        
+
         STARTING,
         PRUNING,
         /**
@@ -116,31 +120,33 @@ public class UploadThread implements Runnable {
      * The {@code BackupStatus} of the backup thread
      */
     private static BackupStatus backupStatus = BackupStatus.NOT_RUNNING;
-    
+
     private static LocalDateTime nextIntervalBackupTime;
     private static boolean lastBackupSuccessful = true;
 
     /**
-     * The backup currently being backed up by the 
+     * The backup currently being backed up by the
      */
     private static int backupBackingUp = 0;
-    
+    // フラグ: 実際にバックアップ処理が開始されたかどうか（Startイベントが発火した場合に true になる）
+    private boolean backupStarted = false;
+
     public abstract static class UploadLogger implements Logger {
         public void broadcast(String input, String... placeholders) {
             MessageUtil.Builder()
-                .mmText(input, placeholders)
-                .all()
-                .send();
+                    .mmText(input, placeholders)
+                    .all()
+                    .send();
         }
 
         public abstract void log(String input, String... placeholders);
-        
+
         public void initiatorError(String input, String... placeholders) {}
 
         public void info(String input, String... placeholders) {
             MessageUtil.Builder()
-                .mmText(input, placeholders)
-                .send();
+                    .mmText(input, placeholders)
+                    .send();
         }
     }
 
@@ -152,9 +158,9 @@ public class UploadThread implements Runnable {
             @Override
             public void log(String input, String... placeholders) {
                 MessageUtil.Builder()
-                    .mmText(input, placeholders)
-                    .toPerm(Permission.BACKUP)
-                    .send();
+                        .mmText(input, placeholders)
+                        .toPerm(Permission.BACKUP)
+                        .send();
             }
         };
         fileUtil = new FileUtil(logger);
@@ -171,18 +177,18 @@ public class UploadThread implements Runnable {
             @Override
             public void log(String input, String... placeholders) {
                 MessageUtil.Builder()
-                    .mmText(input, placeholders)
-                    .to(initiator)
-                    .toPerm(Permission.BACKUP)
-                    .send();
+                        .mmText(input, placeholders)
+                        .to(initiator)
+                        .toPerm(Permission.BACKUP)
+                        .send();
             }
             @Override
             public void initiatorError(String input, String... placeholders) {
                 MessageUtil.Builder()
-                    .mmText(input, placeholders)
-                    .to(initiator)
-                    .toConsole(false)
-                    .send();
+                        .mmText(input, placeholders)
+                        .to(initiator)
+                        .toConsole(false)
+                        .send();
             }
         };
         fileUtil = new FileUtil(logger);
@@ -196,8 +202,8 @@ public class UploadThread implements Runnable {
     public void run() {
         if (initiator != null && backupStatus != BackupStatus.NOT_RUNNING) {
             logger.initiatorError(
-                intl("backup-already-running"),
-                "backup-status", getBackupStatus());
+                    intl("backup-already-running"),
+                    "backup-status", getBackupStatus());
             return;
         }
         Bukkit.getLogger().info("[DriveBackupV2] UploadThread.run invoked (initiator=" + (initiator==null?"null/auto":"present/manual") + ")");
@@ -217,24 +223,61 @@ public class UploadThread implements Runnable {
             if (initiator == null) {
                 try {
                     // callEvent はメインスレッドで実行する
-                    Bukkit.getLogger().info("[DriveBackupV2] Attempting to fire AutoBackupEndEvent (isMainThread=" + Bukkit.isPrimaryThread() + ")");
-                    if (Bukkit.isPrimaryThread()) {
-                        Bukkit.getLogger().info("[DriveBackupV2] Firing AutoBackupEndEvent synchronously");
-                        Bukkit.getPluginManager().callEvent(new AutoBackupEndEvent(lastBackupSuccessful));
+                    if (!backupStarted) {
+                        Bukkit.getLogger().info("[DriveBackupV2] Backup never started; skipping AutoBackupEndEvent");
                     } else {
-                        Bukkit.getLogger().info("[DriveBackupV2] Scheduling AutoBackupEndEvent to runTask on main thread");
-                        DriveBackup instance = DriveBackup.getInstance();
-                        if (instance == null) {
-                            Bukkit.getLogger().warning("[DriveBackupV2] Cannot schedule AutoBackupEndEvent: plugin instance is null. Event will not be fired asynchronously.");
+                        Bukkit.getLogger().info("[DriveBackupV2] Attempting to fire AutoBackupEndEvent (isMainThread=" + Bukkit.isPrimaryThread() + ")");
+                        if (Bukkit.isPrimaryThread()) {
+                            Bukkit.getLogger().info("[DriveBackupV2] Firing AutoBackupEndEvent synchronously");
+                            Bukkit.getPluginManager().callEvent(new AutoBackupEndEvent(lastBackupSuccessful));
                         } else {
-                            Bukkit.getScheduler().runTask(instance, () -> {
-                                Bukkit.getLogger().info("[DriveBackupV2] Running scheduled AutoBackupEndEvent on main thread");
-                                Bukkit.getPluginManager().callEvent(new AutoBackupEndEvent(lastBackupSuccessful));
-                            });
+                            Bukkit.getLogger().info("[DriveBackupV2] Scheduling AutoBackupEndEvent to runTask on main thread");
+                            DriveBackup instance = DriveBackup.getInstance();
+                            if (instance == null) {
+                                Bukkit.getLogger().warning("[DriveBackupV2] Cannot schedule AutoBackupEndEvent: plugin instance is null. Event will not be fired asynchronously.");
+                            } else {
+                                try {
+                                    Bukkit.getScheduler().callSyncMethod(instance, (java.util.concurrent.Callable<Void>) () -> {
+                                        Bukkit.getPluginManager().callEvent(new AutoBackupEndEvent(lastBackupSuccessful));
+                                        return null;
+                                    }).get();
+                                } catch (Exception e) {
+                                    Bukkit.getLogger().warning("[DriveBackupV2] Exception while scheduling AutoBackupEndEvent: " + e.getMessage());
+                                    e.printStackTrace();
+                                }
+                            }
                         }
-                 }
+                    }
                 } catch (Exception ex) {
                     Bukkit.getLogger().warning("[DriveBackupV2] Failed to fire AutoBackupEndEvent: " + ex.getMessage());
+                }
+            } else {
+                // Manual end event
+                try {
+                    if (!backupStarted) {
+                        Bukkit.getLogger().info("[DriveBackupV2] Manual backup never started; skipping ManualBackupEndEvent");
+                    } else {
+                        Bukkit.getLogger().info("[DriveBackupV2] Attempting to fire ManualBackupEndEvent (isMainThread=" + Bukkit.isPrimaryThread() + ")");
+                        if (Bukkit.isPrimaryThread()) {
+                            Bukkit.getPluginManager().callEvent(new ManualBackupEndEvent(lastBackupSuccessful));
+                            Bukkit.getLogger().info("[DriveBackupV2] callEvent returned for ManualBackupEndEvent (sync)");
+                        } else {
+                            DriveBackup instance = DriveBackup.getInstance();
+                            if (instance != null) {
+                                try {
+                                    Bukkit.getScheduler().callSyncMethod(instance, (java.util.concurrent.Callable<Void>) () -> {
+                                        Bukkit.getPluginManager().callEvent(new ManualBackupEndEvent(lastBackupSuccessful));
+                                        return null;
+                                    }).get();
+                                } catch (Exception e) {
+                                    Bukkit.getLogger().warning("[DriveBackupV2] Exception while scheduling ManualBackupEndEvent: " + e.getMessage());
+                                    e.printStackTrace();
+                                }
+                            }
+                        }
+                    }
+                } catch (Exception ex) {
+                    Bukkit.getLogger().warning("[DriveBackupV2] Failed to fire ManualBackupEndEvent: " + ex.getMessage());
                 }
             }
         }
@@ -259,12 +302,84 @@ public class UploadThread implements Runnable {
         Bukkit.getLogger().info("[DriveBackupV2] DriveBackupApi.shouldStartBackup() = " + shouldStart);
         if (!shouldStart) {
             Bukkit.getLogger().info("[DriveBackupV2] Aborting backup because shouldStartBackup returned false");
+            // notify listeners that a backup was attempted but aborted
+            if (initiator == null) {
+                try {
+                    Bukkit.getLogger().info("[DriveBackupV2] Attempting to fire AutoBackupAttemptEvent (isMainThread=" + Bukkit.isPrimaryThread() + ")");
+                    if (Bukkit.isPrimaryThread()) {
+                        Bukkit.getPluginManager().callEvent(new AutoBackupAttemptEvent());
+                        Bukkit.getLogger().info("[DriveBackupV2] callEvent returned for AutoBackupAttemptEvent (sync)");
+                    } else {
+                        DriveBackup instance = DriveBackup.getInstance();
+                        if (instance != null) {
+                            try {
+                                Bukkit.getScheduler().callSyncMethod(instance, (java.util.concurrent.Callable<Void>) () -> {
+                                    Bukkit.getPluginManager().callEvent(new AutoBackupAttemptEvent());
+                                    return null;
+                                }).get();
+                            } catch (Exception e) {
+                                Bukkit.getLogger().warning("[DriveBackupV2] Exception while scheduling AutoBackupAttemptEvent: " + e.getMessage());
+                                e.printStackTrace();
+                            }
+                        }
+                    }
+                } catch (Exception ex) {
+                    Bukkit.getLogger().warning("[DriveBackupV2] Failed to fire AutoBackupAttemptEvent: " + ex.getMessage());
+                }
+            } else {
+                try {
+                    Bukkit.getLogger().info("[DriveBackupV2] Attempting to fire ManualBackupAttemptEvent (isMainThread=" + Bukkit.isPrimaryThread() + ")");
+                    if (Bukkit.isPrimaryThread()) {
+                        Bukkit.getPluginManager().callEvent(new ManualBackupAttemptEvent());
+                        Bukkit.getLogger().info("[DriveBackupV2] callEvent returned for ManualBackupAttemptEvent (sync)");
+                    } else {
+                        DriveBackup instance = DriveBackup.getInstance();
+                        if (instance != null) {
+                            try {
+                                Bukkit.getScheduler().callSyncMethod(instance, (java.util.concurrent.Callable<Void>) () -> {
+                                    Bukkit.getPluginManager().callEvent(new ManualBackupAttemptEvent());
+                                    return null;
+                                }).get();
+                            } catch (Exception e) {
+                                Bukkit.getLogger().warning("[DriveBackupV2] Exception while scheduling ManualBackupAttemptEvent: " + e.getMessage());
+                                e.printStackTrace();
+                            }
+                        }
+                    }
+                } catch (Exception ex) {
+                    Bukkit.getLogger().warning("[DriveBackupV2] Failed to fire ManualBackupAttemptEvent: " + ex.getMessage());
+                }
+            }
             return;
         }
         if (config.backupStorage.backupsRequirePlayers && !PlayerListener.isAutoBackupsActive() && initiator == null) {
+            // backup aborted due to no players / inactivity: fire AutoBackupAttemptEvent then return
             Bukkit.getLogger().info("[DriveBackupV2] Aborting backup because backupsRequirePlayers is true but no players are present or auto backups inactive");
+            try {
+                Bukkit.getLogger().info("[DriveBackupV2] Attempting to fire AutoBackupAttemptEvent (isMainThread=" + Bukkit.isPrimaryThread() + ")");
+                if (Bukkit.isPrimaryThread()) {
+                    Bukkit.getPluginManager().callEvent(new AutoBackupAttemptEvent());
+                    Bukkit.getLogger().info("[DriveBackupV2] callEvent returned for AutoBackupAttemptEvent (sync)");
+                } else {
+                    DriveBackup instance = DriveBackup.getInstance();
+                    if (instance != null) {
+                        try {
+                            Bukkit.getScheduler().callSyncMethod(instance, (java.util.concurrent.Callable<Void>) () -> {
+                                Bukkit.getPluginManager().callEvent(new AutoBackupAttemptEvent());
+                                return null;
+                            }).get();
+                        } catch (Exception e) {
+                            Bukkit.getLogger().warning("[DriveBackupV2] Exception while scheduling AutoBackupAttemptEvent: " + e.getMessage());
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                Bukkit.getLogger().warning("[DriveBackupV2] Failed to fire AutoBackupAttemptEvent: " + ex.getMessage());
+            }
             return;
         }
+
         // カスタムイベント: 自動バックアップ開始（initiator == null の場合のみ）
         if (initiator == null) {
             try {
@@ -272,23 +387,67 @@ public class UploadThread implements Runnable {
                 Bukkit.getLogger().info("[DriveBackupV2] Attempting to fire AutoBackupStartEvent (isMainThread=" + Bukkit.isPrimaryThread() + ")");
                 if (Bukkit.isPrimaryThread()) {
                     Bukkit.getLogger().info("[DriveBackupV2] Firing AutoBackupStartEvent synchronously");
-                    Bukkit.getPluginManager().callEvent(new AutoBackupStartEvent());
+                    try {
+                        Bukkit.getPluginManager().callEvent(new AutoBackupStartEvent());
+                        Bukkit.getLogger().info("[DriveBackupV2] callEvent returned for AutoBackupStartEvent (sync)");
+                        // 実際に開始されたことを示すフラグを立てる
+                        backupStarted = true;
+                    } catch (Exception e) {
+                        Bukkit.getLogger().warning("[DriveBackupV2] Exception while firing AutoBackupStartEvent synchronously: " + e.getMessage());
+                        e.printStackTrace();
+                    }
                 } else {
                     Bukkit.getLogger().info("[DriveBackupV2] Scheduling AutoBackupStartEvent to runTask on main thread");
                     DriveBackup instance = DriveBackup.getInstance();
                     if (instance == null) {
                         Bukkit.getLogger().warning("[DriveBackupV2] Cannot schedule AutoBackupStartEvent: plugin instance is null. Event will not be fired asynchronously.");
                     } else {
-                        Bukkit.getScheduler().runTask(instance, () -> {
-                            Bukkit.getLogger().info("[DriveBackupV2] Running scheduled AutoBackupStartEvent on main thread");
-                            Bukkit.getPluginManager().callEvent(new AutoBackupStartEvent());
-                        });
+                        try {
+                            Bukkit.getLogger().info("[DriveBackupV2] Scheduling and waiting for AutoBackupStartEvent on main thread");
+                            Bukkit.getScheduler().callSyncMethod(instance, (java.util.concurrent.Callable<Void>) () -> {
+                                Bukkit.getPluginManager().callEvent(new AutoBackupStartEvent());
+                                return null;
+                            }).get();
+                            Bukkit.getLogger().info("[DriveBackupV2] callEvent returned for AutoBackupStartEvent (scheduled)");
+                            backupStarted = true;
+                        } catch (Exception e) {
+                            Bukkit.getLogger().warning("[DriveBackupV2] Exception while scheduling AutoBackupStartEvent: " + e.getMessage());
+                            e.printStackTrace();
+                        }
                     }
-                 }
+                }
             } catch (Exception ex) {
                 Bukkit.getLogger().warning("[DriveBackupV2] Failed to fire AutoBackupStartEvent: " + ex.getMessage());
             }
+        } else {
+            // Manual backup: fire ManualBackupStartEvent
+            try {
+                Bukkit.getLogger().info("[DriveBackupV2] Attempting to fire ManualBackupStartEvent (isMainThread=" + Bukkit.isPrimaryThread() + ")");
+                if (Bukkit.isPrimaryThread()) {
+                    Bukkit.getPluginManager().callEvent(new ManualBackupStartEvent());
+                    Bukkit.getLogger().info("[DriveBackupV2] callEvent returned for ManualBackupStartEvent (sync)");
+                    backupStarted = true;
+                } else {
+                    DriveBackup instance = DriveBackup.getInstance();
+                    if (instance != null) {
+                        try {
+                            Bukkit.getLogger().info("[DriveBackupV2] Scheduling and waiting for ManualBackupStartEvent on main thread");
+                            Bukkit.getScheduler().callSyncMethod(instance, (java.util.concurrent.Callable<Void>) () -> {
+                                Bukkit.getPluginManager().callEvent(new ManualBackupStartEvent());
+                                return null;
+                            }).get();
+                            backupStarted = true;
+                        } catch (Exception e) {
+                            Bukkit.getLogger().warning("[DriveBackupV2] Exception while scheduling ManualBackupStartEvent: " + e.getMessage());
+                            e.printStackTrace();
+                        }
+                    }
+                }
+            } catch (Exception ex) {
+                Bukkit.getLogger().warning("[DriveBackupV2] Failed to fire ManualBackupStartEvent: " + ex.getMessage());
+            }
         }
+
         boolean errorOccurred = false;
         List<ExternalBackupSource> externalBackupList = Arrays.asList(config.externalBackups.sources);
         backupList = new ArrayList<>(Arrays.asList(config.backupList.list));
@@ -356,12 +515,12 @@ public class UploadThread implements Runnable {
             uploader.close();
             if (uploader.isErrorWhileUploading()) {
                 logger.log(intl("backup-method-error-occurred"),
-                    "diagnose-command", "/drivebackup test " + uploader.getId(),
-                    "upload-method", uploader.getName());
+                        "diagnose-command", "/drivebackup test " + uploader.getId(),
+                        "upload-method", uploader.getName());
                 errorOccurred = true;
             } else {
                 logger.log(intl("backup-method-complete"),
-                    "upload-method", uploader.getName());
+                        "upload-method", uploader.getName());
             }
         }
         if (!errorOccurred) {
@@ -391,28 +550,28 @@ public class UploadThread implements Runnable {
             AuthenticationProvider provider = uploader.getAuthProvider();
             if (provider != null && !Authenticator.hasRefreshToken(provider)) {
                 logger.log(
-                    intl("backup-method-not-linked"),
-                    "link-command", LINK_COMMAND + provider.getId(),
-                    "upload-method", provider.getName());
+                        intl("backup-method-not-linked"),
+                        "link-command", LINK_COMMAND + provider.getId(),
+                        "upload-method", provider.getName());
                 iterator.remove();
                 continue;
             }
             if (!uploader.isAuthenticated()) {
                 if (provider == null) {
                     logger.log(
-                        intl("backup-method-not-auth"),
-                        "upload-method", uploader.getName());
+                            intl("backup-method-not-auth"),
+                            "upload-method", uploader.getName());
                 } else {
                     logger.log(
-                        intl("backup-method-not-auth-authenticator"),
-                        "link-command", LINK_COMMAND + provider.getId(),
-                        "upload-method", uploader.getName());
+                            intl("backup-method-not-auth-authenticator"),
+                            "link-command", LINK_COMMAND + provider.getId(),
+                            "upload-method", uploader.getName());
                 }
                 iterator.remove();
             }
         }
     }
-    
+
     private void pruneLocalBackups() {
         logger.log(intl("backup-local-prune-start"));
         for (Map.Entry<String, LocalDateTimeFormatter> entry : locationsToBePruned.entrySet()) {
@@ -422,7 +581,7 @@ public class UploadThread implements Runnable {
         }
         logger.log(intl("backup-local-prune-complete"));
     }
-    
+
     /**
      * Creates a backup file of the specified folder
      * @param location path to the folder
@@ -448,7 +607,7 @@ public class UploadThread implements Runnable {
         locationsToBePruned.put(location, formatter);
         logger.info(intl("backup-local-file-complete"), "location", location);
     }
-    
+
     private void uploadBackupFiles(List<Uploader> uploaders) {
         for (BackupListEntry set : backupList) {
             backupBackingUp++;
@@ -457,7 +616,7 @@ public class UploadThread implements Runnable {
             }
         }
     }
-    
+
     /**
      * Uploads the most recent backup file to the specified uploaders
      * @param location path to the folder
@@ -505,17 +664,17 @@ public class UploadThread implements Runnable {
      */
     private void makeExternalFileBackup(ExternalFTPSource externalBackup) {
         logger.info(
-            intl("external-ftp-backup-start"), 
-            "socket-addr", getSocketAddress(externalBackup));
+                intl("external-ftp-backup-start"),
+                "socket-addr", getSocketAddress(externalBackup));
         FTPUploader ftpUploader = new FTPUploader(
                 logger,
-                externalBackup.hostname, 
-                externalBackup.port, 
-                externalBackup.username, 
+                externalBackup.hostname,
+                externalBackup.port,
+                externalBackup.username,
                 externalBackup.password,
                 externalBackup.ftps,
                 externalBackup.sftp,
-                externalBackup.publicKey, 
+                externalBackup.publicKey,
                 externalBackup.passphrase,
                 "external-backups",
                 ".");
@@ -528,9 +687,9 @@ public class UploadThread implements Runnable {
             ArrayList<BlacklistEntry> blacklist = new ArrayList<>();
             for (String blacklistGlob : backup.blacklist) {
                 BlacklistEntry blacklistEntry = new BlacklistEntry(
-                    blacklistGlob, 
-                    FileSystems.getDefault().getPathMatcher("glob:" + blacklistGlob)
-                    );
+                        blacklistGlob,
+                        FileSystems.getDefault().getPathMatcher("glob:" + blacklistGlob)
+                );
                 blacklist.add(blacklistEntry);
             }
             String baseDirectory;
@@ -561,28 +720,28 @@ public class UploadThread implements Runnable {
                 int blacklistedFiles = blacklistEntry.getBlacklistedFiles();
                 if (blacklistedFiles > 0) {
                     logger.log(
-                        intl("external-ftp-backup-blacklisted"), 
-                        "blacklisted-files", String.valueOf(blacklistedFiles),
-                        "glob-pattern", globPattern);
+                            intl("external-ftp-backup-blacklisted"),
+                            "blacklisted-files", String.valueOf(blacklistedFiles),
+                            "glob-pattern", globPattern);
                 }
             }
         }
         ftpUploader.close();
         BackupListEntry backup = new BackupListEntry(
-            new PathBackupLocation("external-backups" + "/" + tempFolderName),
-            externalBackup.format,
-            true,
-            new String[0]
+                new PathBackupLocation("external-backups" + "/" + tempFolderName),
+                externalBackup.format,
+                true,
+                new String[0]
         );
         backupList.add(backup);
         if (ftpUploader.isErrorWhileUploading()) {
             logger.log(
-                intl("external-ftp-backup-failed"),
-                "socket-addr", getSocketAddress(externalBackup));
+                    intl("external-ftp-backup-failed"),
+                    "socket-addr", getSocketAddress(externalBackup));
         } else {
             logger.info(
-                intl("external-ftp-backup-complete"),
-                "socket-addr", getSocketAddress(externalBackup));
+                    intl("external-ftp-backup-complete"),
+                    "socket-addr", getSocketAddress(externalBackup));
         }
     }
 
@@ -592,12 +751,12 @@ public class UploadThread implements Runnable {
      */
     private void makeExternalDatabaseBackup(ExternalMySQLSource externalBackup) {
         logger.info(
-            intl("external-mysql-backup-start"), 
-            "socket-addr", getSocketAddress(externalBackup));
+                intl("external-mysql-backup-start"),
+                "socket-addr", getSocketAddress(externalBackup));
         MySQLUploader mysqlUploader = new MySQLUploader(
-                externalBackup.hostname, 
-                externalBackup.port, 
-                externalBackup.username, 
+                externalBackup.hostname,
+                externalBackup.port,
+                externalBackup.username,
                 externalBackup.password,
                 externalBackup.ssl);
         String tempFolderName = getTempFolderName(externalBackup);
@@ -608,26 +767,26 @@ public class UploadThread implements Runnable {
         for (MySQLDatabaseBackup database : externalBackup.databaseList) {
             for (String blacklistEntry : database.blacklist) {
                 logger.log(
-                    intl("external-mysql-backup-blacklisted"), 
-                    "blacklist-entry", blacklistEntry);
+                        intl("external-mysql-backup-blacklisted"),
+                        "blacklist-entry", blacklistEntry);
             }
             mysqlUploader.downloadDatabase(database.name, tempFolderName, Arrays.asList(database.blacklist));
         }
         BackupListEntry backup = new BackupListEntry(
-            new PathBackupLocation("external-backups" + "/" + tempFolderName),
-            externalBackup.format,
-            true,
-            new String[0]
+                new PathBackupLocation("external-backups" + "/" + tempFolderName),
+                externalBackup.format,
+                true,
+                new String[0]
         );
         backupList.add(backup);
         if (mysqlUploader.isErrorWhileUploading()) {
             logger.log(
-                intl("external-mysql-backup-failed"), 
-                "socket-addr", getSocketAddress(externalBackup));
+                    intl("external-mysql-backup-failed"),
+                    "socket-addr", getSocketAddress(externalBackup));
         } else {
             logger.info(
-                intl("external-mysql-backup-complete"),
-                "socket-addr", getSocketAddress(externalBackup));
+                    intl("external-mysql-backup-complete"),
+                    "socket-addr", getSocketAddress(externalBackup));
         }
     }
 
@@ -661,23 +820,23 @@ public class UploadThread implements Runnable {
         String backupSetName = backupList[backupIndex].location.toString();
 
         return message
-            .replace("<set-name>", backupSetName)
-            .replace("<set-num>", String.valueOf(backupNumber+1))
-            .replace("<set-count>", String.valueOf(backupList.length));
+                .replace("<set-name>", backupSetName)
+                .replace("<set-num>", String.valueOf(backupNumber+1))
+                .replace("<set-count>", String.valueOf(backupList.length));
     }
 
     /**
      * Gets the date/time of the next automatic backup, if enabled.
-     * @return the time and/or date of the next automatic backup formatted using the messages in the {@code config.yml} 
+     * @return the time and/or date of the next automatic backup formatted using the messages in the {@code config.yml}
      */
     public static String getNextAutoBackup() {
         Config config = ConfigParser.getConfig();
         if (config.backupScheduling.enabled) {
             ZonedDateTime now = ZonedDateTime.now(config.advanced.dateTimezone);
             ZonedDateTime nextBackupDate = Scheduler.getBackupDatesList().stream()
-                .filter(zdt -> zdt.isAfter(now))
-                .min(Comparator.naturalOrder())
-                .orElseThrow(NoSuchElementException::new);
+                    .filter(zdt -> zdt.isAfter(now))
+                    .min(Comparator.naturalOrder())
+                    .orElseThrow(NoSuchElementException::new);
             DateTimeFormatter backupDateFormatter = DateTimeFormatter.ofPattern(intl("next-schedule-backup-format"), config.advanced.dateLanguage);
             return intl("next-schedule-backup").replaceAll("%DATE", nextBackupDate.format(backupDateFormatter));
         } else if (config.backupStorage.delay != -1) {
@@ -742,10 +901,10 @@ public class UploadThread implements Runnable {
             return null;
         }
     }
-    
+
     @Nullable
     private static String hash(String input) {
-        MessageDigest digest = null;
+        MessageDigest digest;
         try {
             digest = MessageDigest.getInstance("SHA-256");
         } catch (NoSuchAlgorithmException e) {
