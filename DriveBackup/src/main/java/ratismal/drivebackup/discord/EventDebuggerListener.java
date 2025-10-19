@@ -20,7 +20,7 @@ public class EventDebuggerListener implements Listener {
     public void onAutoBackupAttempt(AutoBackupAttemptEvent event) {
         try {
             // 設定から警告色（オレンジ）を取得
-            Color color = ConfigParser.getConfig().messages.embedAutoAttempt;
+            Color color = Color.orange;
             DiscordController.sendEmbed("backup","Auto backup skipped — no players online.", color);
         } catch (Exception ex) {
             Bukkit.getLogger().warning("[DriveBackupV2] EventDebuggerListener failed to send attempt embed: " + ex.getMessage());
@@ -33,7 +33,7 @@ public class EventDebuggerListener implements Listener {
     public void onAutoBackupStart(AutoBackupStartEvent event) {
         try {
             // 設定から開始色（明るい緑）を取得
-            Color color = ConfigParser.getConfig().messages.embedAutoStart;
+            Color color = Color.green;
             DiscordController.sendEmbed("backup","Scheduled backup started.", color);
         } catch (Exception ex) {
             Bukkit.getLogger().warning("[DriveBackupV2] EventDebuggerListener failed to send start embed: " + ex.getMessage());
@@ -47,9 +47,9 @@ public class EventDebuggerListener implements Listener {
         try {
             // 終了は成功なら設定の成功色、失敗なら設定の失敗色
             if (event.getSuccess()) {
-                DiscordController.sendEmbed("backup","Scheduled backup finished successfully.", ConfigParser.getConfig().messages.embedAutoEndSuccess);
+                DiscordController.sendEmbed("backup","Scheduled backup finished successfully.", Color.green);
             } else {
-                DiscordController.sendEmbed("backup","Scheduled backup finished with errors.", ConfigParser.getConfig().messages.embedAutoEndFailure);
+                DiscordController.sendEmbed("backup","Scheduled backup finished with errors.", Color.red);
             }
         } catch (Exception ex) {
             Bukkit.getLogger().warning("[DriveBackupV2] EventDebuggerListener failed to send end embed: " + ex.getMessage());
@@ -63,7 +63,7 @@ public class EventDebuggerListener implements Listener {
     public void onManualBackupAttempt(ManualBackupAttemptEvent event) {
         try {
             // 設定から手動中止色（オレンジ）を取得
-            DiscordController.sendEmbed("backup","Manual backup attempted but aborted.", ConfigParser.getConfig().messages.embedManualAttempt);
+            DiscordController.sendEmbed("backup","Manual backup attempted but aborted.", Color.orange);
         } catch (Exception ex) {
             Bukkit.getLogger().warning("[DriveBackupV2] EventDebuggerListener failed to send manual attempt embed: " + ex.getMessage());
             ex.printStackTrace();
