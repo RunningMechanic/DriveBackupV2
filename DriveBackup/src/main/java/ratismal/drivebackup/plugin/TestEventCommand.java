@@ -7,12 +7,13 @@ import org.bukkit.command.CommandSender;
 import org.jetbrains.annotations.NotNull;
 import ratismal.drivebackup.discord.AutoBackupEndEvent;
 import ratismal.drivebackup.discord.AutoBackupStartEvent;
+import ratismal.drivebackup.discord.AutoBackupAttemptEvent;
 
 public class TestEventCommand implements CommandExecutor {
     @Override
     public boolean onCommand(@NotNull CommandSender sender, @NotNull Command command, @NotNull String label, String[] args) {
         if (args.length == 0) {
-            sender.sendMessage("Usage: /dbv2event <start|end> [success]");
+            sender.sendMessage("Usage: /dbv2event <start|end|attempt> [success]");
             return true;
         }
         String sub = args[0].toLowerCase();
@@ -28,10 +29,13 @@ public class TestEventCommand implements CommandExecutor {
             Bukkit.getPluginManager().callEvent(new AutoBackupEndEvent(success));
             sender.sendMessage("Fired AutoBackupEndEvent success=" + success);
             return true;
+        } else if (sub.equals("attempt")) {
+            Bukkit.getPluginManager().callEvent(new AutoBackupAttemptEvent());
+            sender.sendMessage("Fired AutoBackupAttemptEvent (simulated skip)");
+            return true;
         } else {
             sender.sendMessage("Unknown subcommand: " + sub);
             return true;
         }
     }
 }
-
